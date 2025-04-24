@@ -1,21 +1,23 @@
 #include <gst/gst.h>
+#include <stdio.h>
 
-typedef struct _CustomData {
-  GstElement *pipeline;
-  GstElement *source;
-  GstElement *decoder;
-  GstElement *crop;
-  GstElement *flip;
-  GstElement *converter;
-  GstElement *sink;
+typedef struct _CustomData
+{
+    GstElement *pipeline;
+    GstElement *source;
+    GstElement *decoder;
+    GstElement *crop;
+    GstElement *flip;
+    GstElement *converter;
+    GstElement *sink;
 } CustomData;
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
     CustomData data;
-
-    GstBus *bus;
-    GstMessage *msg;
     GstStateChangeReturn ret;
+    gint flip_mode = 0;
+    gint crop_top = 0, crop_bottom = 0, crop_left = 0, crop_right = 0;
 
     gst_init(&argc, &argv);
 
@@ -27,62 +29,112 @@ int main(int argc, char *argv[]) {
     data.converter = gst_element_factory_make("videoconvert", "converter");
     data.sink = gst_element_factory_make("autovideosink", "sink");
 
-    if (!data.pipeline || !data.source || !data.decoder || !data.crop || !data.flip || !data.converter || !data.sink) {
+    if (!data.pipeline || !data.source || !data.decoder || !data.crop || !data.flip || !data.converter || !data.sink)
+    {
         g_printerr("Failed to create elements.\n");
         return -1;
     }
 
     g_object_set(data.source, "device", "/dev/video0", NULL);
-
-    g_object_set(data.crop,
-                 "top", 10,
-                 "bottom", 20,
-                 "left", 30,
-                 "right", 20,
-                 NULL);
-
-    g_object_set(data.flip, "method", 0, NULL);
+    g_object_set(data.crop, "top", crop_top, "bottom", crop_bottom, "left", crop_left, "right", crop_right, NULL);
+    g_object_set(data.flip, "method", flip_mode, NULL);
 
     gst_bin_add_many(GST_BIN(data.pipeline), data.source, data.decoder, data.crop, data.flip, data.converter, data.sink, NULL);
 
-    if (!gst_element_link_many(data.source, data.decoder, data.crop, data.flip, data.converter, data.sink, NULL)) {
+    if (!gst_element_link_many(data.source, data.decoder, data.crop, data.flip, data.converter, data.sink, NULL))
+    {
         g_printerr("Failed to link elements.\n");
         gst_object_unref(data.pipeline);
         return -1;
     }
 
     ret = gst_element_set_state(data.pipeline, GST_STATE_PLAYING);
-    if (ret == GST_STATE_CHANGE_FAILURE) {
+    if (ret == GST_STATE_CHANGE_FAILURE)
+    {
         g_printerr("Unable to set the pipeline to the playing state.\n");
         gst_object_unref(data.pipeline);
         return -1;
     }
 
-    bus = gst_element_get_bus(data.pipeline);
-    msg = gst_bus_timed_pop_filtered(bus, GST_CLOCK_TIME_NONE, (GstMessageType)(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+    while (true)
+    {
+        char input;
+        g_print("\nCommands:\n"
+                "  f = flip\n"
+                "  t = set crop top\n"
+                "  b = set crop bottom\n"
+                "  l = set crop left\n"
+                "  r = set crop right\n"
+                "  q = quit\n");
+        g_print("Enter command: ");
+        input = getchar();
+        while (getchar() != '\n')
+            ;
 
-    if (msg != NULL) {
-        GError *err;
-        gchar *debug_info;
-        switch (GST_MESSAGE_TYPE(msg)) {
-            case GST_MESSAGE_ERROR:
-                gst_message_parse_error(msg, &err, &debug_info);
-                g_printerr("Error from element %s: %s\n", GST_OBJECT_NAME(msg->src), err->message);
-                g_printerr("Debugging info: %s\n", debug_info ? debug_info : "none");
-                g_clear_error(&err);
-                g_free(debug_info);
+        switch (input)
+        {
+        case 'q':
+            g_print("Quitting...\n");
+            goto exit_loop;
+
+        case 'f':
+            flip_mode = (flip_mode + 1) % 4;
+            g_object_set(data.flip, "method", flip_mode, NULL);
+            g_print("Flip method changed to: %d\n", flip_mode);
+            break;
+
+        case 't':
+        case 'b':
+        case 'l':
+        case 'r':
+        {
+            int value;
+            g_print("Enter value: ");
+            if (scanf("%d", &value) != 1)
+            {
+                g_print("Invalid input. Skipping.\n");
+                while (getchar() != '\n')
+                    ;
                 break;
-            case GST_MESSAGE_EOS:
-                g_print("End-Of-Stream reached.\n");
+            }
+            while (getchar() != '\n')
+                ;
+
+            switch (input)
+            {
+            case 't':
+                crop_top = value;
                 break;
-            default:
-                g_printerr("Unexpected message received.\n");
+            case 'b':
+                crop_bottom = value;
                 break;
+            case 'l':
+                crop_left = value;
+                break;
+            case 'r':
+                crop_right = value;
+                break;
+            }
+
+            g_object_set(data.crop,
+                         "top", crop_top,
+                         "bottom", crop_bottom,
+                         "left", crop_left,
+                         "right", crop_right,
+                         NULL);
+
+            g_print("Crop updated - top: %d, bottom: %d, left: %d, right: %d\n",
+                    crop_top, crop_bottom, crop_left, crop_right);
+            break;
         }
-        gst_message_unref(msg);
+
+        default:
+            g_print("Unknown command.\n");
+            break;
+        }
     }
 
-    gst_object_unref(bus);
+exit_loop:
     gst_element_set_state(data.pipeline, GST_STATE_NULL);
     gst_object_unref(data.pipeline);
 
